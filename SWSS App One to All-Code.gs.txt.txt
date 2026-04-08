@@ -1,0 +1,103 @@
+const SS_ID = "1WzIzSsSvl-IN95FtfwwmXUNUjnYMUEwnwGmnmStwvUo";
+const PROD_SHEET = "Sheet1ProductList";
+const USERS_SHEET = "Sheet6ID&Pin";
+const SHEETS = {
+  rec: "Sheet2Rec",
+  issue: "Sheet3Issue",
+  adj: "Sheet4Adjust",
+  master: "Sheet5Master Stock"
+};
+
+function doGet() {
+  return HtmlService.createTemplateFromFile('index')
+      .evaluate()
+      .setTitle('SWSS Master App')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+function verifyUser(id, pin) {
+  const sheet = SpreadsheetApp.openById(SS_ID).getSheetByName(USERS_SHEET);
+  const data = sheet.getDataRange().getValues();
+  const user = data.slice(1).find(row => row[0].toString() === id.toString() && row[3].toString() === pin.toString());
+  return user ? {name: user[1], status: true} : {status: false};
+}
+
+function getProductData() {
+  const sheet = SpreadsheetApp.openById(SS_ID).getSheetByName(PROD_SHEET);
+  const data = sheet.getDataRange().getValues().slice(1);
+  return data.map(r => ({ basic: r[0], name: r[1], code: r[2], price: r[3] }));
+}
+
+function getMasterStock() {
+  const sheet = SpreadsheetApp.openById(SS_ID).getSheetByName(SHEETS.master);
+  return sheet.getDataRange().getValues().slice(1);
+}
+
+function saveData(type, common, items) {
+  try {
+    const ss = SpreadsheetApp.openById(SS_ID);
+    const logSheet = ss.getSheetByName(SHEETS[type]);
+    const masterSheet = ss.getSheetByName(SHEETS.master);
+    const timestamp = new Date(); // তারিখ ও সময় একসাথে সেভ হবে
+    
+    const masterData = masterSheet.getDataRange().getValues();
+    const masterCodes = masterData.map(r => r[2].toString().trim());
+
+    items.forEach(item => {
+      let rowData = [];
+      if (type === 'rec') {
+        rowData = [timestamp, common.chNo, common.supplier, common.mobile, item.bName, item.pName, item.pCode, item.qty, common.rem];
+      } else if (type === 'issue') {
+        rowData = [timestamp, common.billNo, common.benName, common.mobile, common.addr, item.bName, item.pName, item.pCode, item.price, item.qty, item.total];
+      } else if (type === 'adj') {
+        rowData = [timestamp, common.cause, item.bName, item.pName, item.pCode, item.plusQty, item.minusQty, common.rem];
+      }
+      logSheet.appendRow(rowData);
+
+      const mIdx = masterCodes.indexOf(item.pCode.toString().trim());
+      if (mIdx !== -1) {
+        const rowNum = mIdx + 1;
+        if (type === 'rec') {
+          let cur = parseFloat(masterSheet.getRange(rowNum, 7).getValue()) || 0;
+          masterSheet.getRange(rowNum, 7).setValue(cur + parseFloat(item.qty));
+        } else if (type === 'issue') {
+          let cur = parseFloat(masterSheet.getRange(rowNum, 8).getValue()) || 0;
+          masterSheet.getRange(rowNum, 8).setValue(cur + parseFloat(item.qty));
+        } else if (type === 'adj') {
+          let curP = parseFloat(masterSheet.getRange(rowNum, 9).getValue()) || 0;
+          let curM = parseFloat(masterSheet.getRange(rowNum, 10).getValue()) || 0;
+          masterSheet.getRange(rowNum, 9).setValue(curP + parseFloat(item.plusQty));
+          masterSheet.getRange(rowNum, 10).setValue(curM + parseFloat(item.minusQty));
+        }
+      }
+    });
+    return "Success";
+  } catch (e) { return "Error: " + e.toString(); }
+}
+
+function searchReports(type, start, end) {
+  try {
+    const sheet = SpreadsheetApp.openById(SS_ID).getSheetByName(SHEETS[type]);
+    const data = sheet.getDataRange().getValues();
+    if (data.length < 2) return { headers: [], rows: [] };
+
+    const sDate = start ? new Date(start) : null;
+    const eDate = end ? new Date(end) : null;
+
+    const filtered = data.slice(1).filter(r => {
+      if (!r[0]) return false;
+      const rDate = new Date(r[0]);
+      // তারিখ এবং সময়ের সুনির্দিষ্ট তুলনা
+      return (!sDate || rDate >= sDate) && (!eDate || rDate <= eDate);
+    }).map(r => r.map((cell, idx) => {
+      // রিপোর্টে তারিখের সাথে সময় প্রদর্শনের ফরম্যাট
+      if (idx === 0 && cell instanceof Date) {
+        return Utilities.formatDate(cell, "GMT+6", "dd-MM-yyyy HH:mm");
+      }
+      return cell;
+    }));
+
+    return { headers: data[0], rows: filtered };
+  } catch (e) { return { error: e.toString() }; }
+}

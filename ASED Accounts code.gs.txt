@@ -1,0 +1,93 @@
+const SS_ID = "12ZRmUahbydk2RxcUlaqV2vV_3iKTXR9fPZN8wR7CirE";
+
+function doGet() {
+  return HtmlService.createTemplateFromFile('index').evaluate()
+      .setTitle('ASED Society Accounts')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+// লগইন চেক ফাংশন
+function checkLogin(id, pin) {
+  try {
+    const ss = SpreadsheetApp.openById(SS_ID);
+    const sheet = ss.getSheetByName("S6IDpin");
+    const data = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
+      if (data[i][0].toString().trim() === id.toString().trim() && 
+          data[i][3].toString().trim() === pin.toString().trim()) {
+        if (data[i][4].toString().toLowerCase().includes("active")) {
+          return { success: true, user: data[i][1] };
+        } else {
+          return { success: false, msg: "আপনার আইডিটি সচল নয়!" };
+        }
+      }
+    }
+    return { success: false, msg: "ভুল আইডি বা পিন!" };
+  } catch (e) { return { success: false, msg: "এরর: " + e.toString() }; }
+}
+
+// প্রাথমিক ডাটা লোড
+function getInitialData() {
+  const ss = SpreadsheetApp.openById(SS_ID);
+  const mssList = ss.getSheetByName("S1MSSList").getRange(2, 1, ss.getSheetByName("S1MSSList").getLastRow()-1, 3).getValues();
+  const masterData = ss.getSheetByName("S5Master").getRange(2, 1, ss.getSheetByName("S5Master").getLastRow()-1, 15).getValues();
+  return {
+    mssList: mssList.map(r => ({ id: r[0], name: r[1], inst: r[2] })),
+    masterTable: masterData
+  };
+}
+
+// ডাটা প্রসেসিং লজিক
+function processEntry(type, obj) {
+  const ss = SpreadsheetApp.openById(SS_ID);
+  const date = Utilities.formatDate(new Date(), "GMT+6", "dd-MM-yyyy");
+  let sheetName = "";
+  let rowData = [];
+
+  if (type === 'rec') {
+    sheetName = "S2RecSaving";
+    rowData = [date, obj.mssNo, obj.name, obj.installment, obj.monthCount, obj.amount];
+    updateMaster(obj.mssNo, 'month', obj.monthCount);
+  } else if (type === 'ref') {
+    sheetName = "S3RfndSaving";
+    rowData = [date, obj.mssNo, obj.name, obj.amount];
+    updateMaster(obj.mssNo, 'refund', obj.amount);
+  } else if (type === 'profit') {
+    sheetName = "S4Profit";
+    rowData = [date, obj.mssNo, obj.name, obj.amount];
+    updateMaster(obj.mssNo, 'profit', obj.amount);
+  }
+
+  ss.getSheetByName(sheetName).appendRow(rowData);
+  return "আলহামদুলিল্লাহ, তথ্য সফলভাবে সংরক্ষিত ও মাস্টার শিট আপডেট হয়েছে!";
+}
+
+// মাস্টার শিট আপডেট লজিক (নতুন ম্যাপিং অনুযায়ী)
+function updateMaster(mssNo, field, value) {
+  const ss = SpreadsheetApp.openById(SS_ID);
+  const sheet = ss.getSheetByName("S5Master");
+  const data = sheet.getDataRange().getValues();
+  
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0].toString() === mssNo.toString()) {
+      let row = i + 1;
+      let val = Number(value);
+
+      if (field === 'month') {
+        let currentH = Number(data[i][7]) || 0; 
+        sheet.getRange(row, 8).setValue(currentH + val); // Column H: Month যোগ
+      } 
+      else if (field === 'refund') {
+        sheet.getRange(row, 13).setValue(val); // Column M: Refund Saving বসবে
+        let currentK = Number(data[i][10]) || 0;
+        sheet.getRange(row, 11).setValue(currentK - val); // Column K: Principal বিয়োগ
+      } 
+      else if (field === 'profit') {
+        let currentN = Number(data[i][13]) || 0;
+        sheet.getRange(row, 14).setValue(currentN + val); // Column N: Profit যোগ হবে (পুরানোটা ডিলিট হবে না)
+      }
+      break;
+    }
+  }
+}

@@ -1,0 +1,81 @@
+const SS_ID = "1TT6fFPs9GVwE-2eMCHVEM08EhlhUDYK8Qd99Pn4VWiI";
+const PROD_SHEET_NAME = "Sheet1productlist";
+const DEST_SHEET_NAME = "Sheet2DestinationData";
+const USERS_SHEET_NAME = "Sheet3PAID&pin";
+const BACKUP_SS_ID = "108V4qU3m1w0WN2XclkJ5RJl10KindiYqUMnBZwBbX0c";
+const BACKUP_SHEET_NAME = "Sheet1OrderData";
+
+const EMAIL_LIST = "khharun123@gmail.com, org.asech@gmail.com";
+
+function doGet() {
+  return HtmlService.createTemplateFromFile('index')
+      .evaluate()
+      .setTitle('PA Entry & Invoice System')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+function verifyUser(paId, pin) {
+  const sheet = SpreadsheetApp.openById(SS_ID).getSheetByName(USERS_SHEET_NAME);
+  const data = sheet.getDataRange().getValues();
+  const user = data.slice(1).find(row => 
+    row[0].toString() === paId.toString() && 
+    row[3].toString() === pin.toString() && 
+    row[4].toString().toLowerCase() === "active"
+  );
+  return user ? {name: user[1], status: true} : {status: false};
+}
+
+function getBasicNames() {
+  const sheet = SpreadsheetApp.openById(SS_ID).getSheetByName(PROD_SHEET_NAME);
+  const data = sheet.getDataRange().getValues();
+  return [...new Set(data.slice(1).map(row => row[0]))];
+}
+
+function getProductsByBasic(basicName) {
+  const sheet = SpreadsheetApp.openById(SS_ID).getSheetByName(PROD_SHEET_NAME);
+  const data = sheet.getDataRange().getValues();
+  return data.filter(row => row[0] === basicName).map(row => ({
+    name: row[1], code: row[2], value: row[3]
+  }));
+}
+
+function submitOrder(formData) {
+  try {
+    const ss = SpreadsheetApp.openById(SS_ID);
+    const destSheet = ss.getSheetByName(DEST_SHEET_NAME);
+    const backupSheet = SpreadsheetApp.openById(BACKUP_SS_ID).getSheetByName(BACKUP_SHEET_NAME);
+    
+    const validProducts = formData.products.filter(p => p.productName !== "");
+    if(validProducts.length === 0) return "No Product Selected";
+
+    validProducts.forEach((p, index) => {
+      let rowData = index === 0 ? [
+        formData.date, formData.paId, formData.beneficiaryName, formData.mobile, formData.address,
+        p.productName, p.code, p.value, p.qty, p.amount, formData.total, formData.deliveryComment
+      ] : ["", "", "", "", "", p.productName, p.code, p.value, p.qty, p.amount, "", ""];
+      
+      destSheet.appendRow(rowData);
+      backupSheet.appendRow(rowData);
+    });
+
+    sendEmailWithPdf(formData);
+    return "Success";
+  } catch (e) {
+    return "Error: " + e.toString();
+  }
+}
+
+function sendEmailWithPdf(formData) {
+  const htmlTemplate = HtmlService.createTemplateFromFile('InvoiceTemplate');
+  htmlTemplate.formData = formData;
+  const htmlContent = htmlTemplate.evaluate().getContent();
+  const blob = Utilities.newBlob(htmlContent, 'text/html', 'Invoice.html');
+  const pdf = blob.getAs('application/pdf').setName("Invoice_" + formData.beneficiaryName + ".pdf");
+
+  MailApp.sendEmail({
+    to: EMAIL_LIST,
+    subject: "New Invoice: " + formData.beneficiaryName,
+    body: "Please see the attached PDF invoice.",
+    attachments: [pdf]
+  });
+}

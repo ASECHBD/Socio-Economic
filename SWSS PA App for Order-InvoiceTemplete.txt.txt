@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: Arial, sans-serif; padding: 10px; }
+    .header { text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 15px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background-color: #f2f2f2; }
+    .footer { margin-top: 20px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h2>ORDER INVOICE</h2>
+  </div>
+  
+  <table style="border: none;">
+    <tr>
+      <td style="border: none;"><strong>Beneficiary:</strong> <?= formData.beneficiaryName ?></td>
+      <td style="border: none; text-align: right;"><strong>Date:</strong> <?= formData.date ?></td>
+    </tr>
+    <tr>
+      <td style="border: none;"><strong>Mobile:</strong> <?= formData.mobile ?></td>
+      <td style="border: none; text-align: right;"><strong>PA ID:</strong> <?= formData.paId ?></td>
+    </tr>
+  </table>
+
+  <table>
+    <thead>
+      <tr style="background-color: #eee;">
+        <th>Product</th><th>Code</th><th>Price</th><th>Qty</th><th>Amount</th>
+      </tr>
+    </thead>
+    <tbody>
+      <? formData.products.forEach(function(p) { if(p.productName) { ?>
+      <tr>
+        <td><?= p.productName ?></td>
+        <td><?= p.code ?></td>
+        <td><?= p.value ?></td>
+        <td><?= p.qty ?></td>
+        <td><?= p.amount ?></td>
+      </tr>
+      <? } }); ?>
+      <tr style="font-weight: bold;">
+        <td colspan="4" style="text-align: right;">Grand Total:</td>
+        <td><?= formData.total ?></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="footer">
+    <p><strong>Note:</strong> <?= formData.deliveryComment ?></p>
+  </div>
+</body>
+</html>

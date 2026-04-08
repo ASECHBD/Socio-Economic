@@ -1,0 +1,66 @@
+const SS_ID = "1UmutgZ8QA35N492zcYNXSwoPrzf64tH-NBY-5SPYp2w"; 
+const PROD_SHEET_NAME = "Sheet1AddressDdownlist"; 
+const USERS_SHEET_NAME = "Sheet3PAIDPin";   
+const DEST_SHEET_NAME = "Sheet2DestinationData";  
+
+function doGet() {
+  return HtmlService.createTemplateFromFile('index')
+    .evaluate()
+    .setTitle('আশেক আর্থ-সামাজিক উন্নয়ন সমিতি')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+// লগইন ভেরিফিকেশন
+function verifyUser(id, pin) {
+  const sheet = SpreadsheetApp.openById(SS_ID).getSheetByName(USERS_SHEET_NAME);
+  const data = sheet.getDataRange().getValues();
+  const inputID = id.toString().trim();
+  const inputPin = pin.toString().trim();
+
+  for (let i = 1; i < data.length; i++) {
+    let sheetID = data[i][0].toString().trim();   
+    let sheetPin = data[i][3].toString().trim(); 
+    let status = data[i][4] ? data[i][4].toString().toLowerCase().trim() : ""; 
+    
+    if (sheetID === inputID && sheetPin === inputPin) {
+      if(status === "inactive") return { status: false, msg: "অ্যাকাউন্টটি বর্তমানে বন্ধ আছে।" };
+      return { status: true, id: sheetID, name: data[i][1] };
+    }
+  }
+  return { status: false, msg: "আইডি অথবা পিন ভুল!" };
+}
+
+// ড্রপডাউন ডেটা নিয়ে আসা
+function getDropdownData() {
+  const sheet = SpreadsheetApp.openById(SS_ID).getSheetByName(PROD_SHEET_NAME);
+  const data = sheet.getDataRange().getValues();
+  let addressList = [];
+  let opinionList = [];
+  
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][0]) addressList.push(data[i][0]);
+    if (data[i][1]) opinionList.push(data[i][1]);
+  }
+  
+  return { address: addressList, opinion: opinionList };
+}
+
+// ডেটা সেভ করা (কলাম A থেকে K পর্যন্ত)
+function submitData(fd) {
+  const sheet = SpreadsheetApp.openById(SS_ID).getSheetByName(DEST_SHEET_NAME);
+  sheet.appendRow([
+    new Date(),      // A: Auto Date
+    fd.paId,         // B: ID of PA
+    fd.paName,       // C: PA Name
+    fd.name,         // D: নাম
+    fd.guardian,     // E: পিতা/স্বামী
+    fd.age,          // F: বয়স
+    fd.addressSel,   // G: ঠিকানা (Dropdown)
+    fd.house,        // H: বাড়ি (সংশোধিত)
+    fd.mobile,       // I: Mobile
+    fd.opinion,      // J: প্রাথমিক মতামত (Dropdown)
+    fd.note          // K: মন্তব্য
+  ]);
+  return "সফলভাবে ডাটা জমা হয়েছে!";
+}
