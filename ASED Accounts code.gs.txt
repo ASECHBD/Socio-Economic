@@ -1,93 +1,347 @@
-const SS_ID = "12ZRmUahbydk2RxcUlaqV2vV_3iKTXR9fPZN8wR7CirE";
+const SPREADSHEET_ID = "12ZRmUahbydk2RxcUlaqV2vV_3iKTXR9fPZN8wR7CirE";
+const NOTIFICATION_EMAIL = "org.asech@gmail.com";
 
 function doGet() {
-  return HtmlService.createTemplateFromFile('index').evaluate()
-      .setTitle('ASED Society Accounts')
-      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
-      .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+  return HtmlService.createHtmlOutputFromFile('index')
+    .setTitle('ASED Society App')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
-// লগইন চেক ফাংশন
-function checkLogin(id, pin) {
-  try {
-    const ss = SpreadsheetApp.openById(SS_ID);
-    const sheet = ss.getSheetByName("S6IDpin");
-    const data = sheet.getDataRange().getValues();
-    for (let i = 1; i < data.length; i++) {
-      if (data[i][0].toString().trim() === id.toString().trim() && 
-          data[i][3].toString().trim() === pin.toString().trim()) {
-        if (data[i][4].toString().toLowerCase().includes("active")) {
-          return { success: true, user: data[i][1] };
-        } else {
-          return { success: false, msg: "আপনার আইডিটি সচল নয়!" };
-        }
+function getSpreadsheet() {
+  return SpreadsheetApp.openById(SPREADSHEET_ID);
+}
+
+// Helper: Safe Date String Formatter (DD-MM-YYYY)
+function formatDateDDMMYYYY(val) {
+  if (!val) return "";
+  if (val instanceof Date) {
+    const day = String(val.getDate()).padStart(2, '0');
+    const month = String(val.getMonth() + 1).padStart(2, '0');
+    const year = val.getFullYear();
+    return `${day}-${month}-${year}`;
+  }
+  return String(val);
+}
+
+// Helper: Format DateTime for Audit Logs
+function formatDateTime(dateObj) {
+  if (!dateObj) return "";
+  const d = new Date(dateObj);
+  if (isNaN(d.getTime())) return "";
+  const dateStr = formatDateDDMMYYYY(d);
+  const hours = String(d.getHours()).padStart(2, '0');
+  const mins = String(d.getMinutes()).padStart(2, '0');
+  const secs = String(d.getSeconds()).padStart(2, '0');
+  return `${dateStr} ${hours}:${mins}:${secs}`;
+}
+
+// ==================== AUTHENTICATION ====================
+function checkLogin(paId, pin) {
+  const ss = getSpreadsheet();
+  const sheet = ss.getSheetByName("S6IDpin");
+  if (!sheet) return { success: false, message: "S6IDpin Sheet Not Found!" };
+  
+  const data = sheet.getDataRange().getValues();
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    if (String(row[0]).trim() === String(paId).trim() && String(row[3]).trim() === String(pin).trim()) {
+      if (String(row[4]).trim().toLowerCase() === "active") {
+        return {
+          success: true,
+          user: {
+            id: row[0],
+            name: row[1],
+            permission: String(row[5]).trim()
+          }
+        };
+      } else {
+        return { success: false, message: "User is Inactive!" };
       }
     }
-    return { success: false, msg: "ভুল আইডি বা পিন!" };
-  } catch (e) { return { success: false, msg: "এরর: " + e.toString() }; }
-}
-
-// প্রাথমিক ডাটা লোড
-function getInitialData() {
-  const ss = SpreadsheetApp.openById(SS_ID);
-  const mssList = ss.getSheetByName("S1MSSList").getRange(2, 1, ss.getSheetByName("S1MSSList").getLastRow()-1, 3).getValues();
-  const masterData = ss.getSheetByName("S5Master").getRange(2, 1, ss.getSheetByName("S5Master").getLastRow()-1, 15).getValues();
-  return {
-    mssList: mssList.map(r => ({ id: r[0], name: r[1], inst: r[2] })),
-    masterTable: masterData
-  };
-}
-
-// ডাটা প্রসেসিং লজিক
-function processEntry(type, obj) {
-  const ss = SpreadsheetApp.openById(SS_ID);
-  const date = Utilities.formatDate(new Date(), "GMT+6", "dd-MM-yyyy");
-  let sheetName = "";
-  let rowData = [];
-
-  if (type === 'rec') {
-    sheetName = "S2RecSaving";
-    rowData = [date, obj.mssNo, obj.name, obj.installment, obj.monthCount, obj.amount];
-    updateMaster(obj.mssNo, 'month', obj.monthCount);
-  } else if (type === 'ref') {
-    sheetName = "S3RfndSaving";
-    rowData = [date, obj.mssNo, obj.name, obj.amount];
-    updateMaster(obj.mssNo, 'refund', obj.amount);
-  } else if (type === 'profit') {
-    sheetName = "S4Profit";
-    rowData = [date, obj.mssNo, obj.name, obj.amount];
-    updateMaster(obj.mssNo, 'profit', obj.amount);
   }
-
-  ss.getSheetByName(sheetName).appendRow(rowData);
-  return "আলহামদুলিল্লাহ, তথ্য সফলভাবে সংরক্ষিত ও মাস্টার শিট আপডেট হয়েছে!";
+  return { success: false, message: "Invalid ID or PIN!" };
 }
 
-// মাস্টার শিট আপডেট লজিক (নতুন ম্যাপিং অনুযায়ী)
-function updateMaster(mssNo, field, value) {
-  const ss = SpreadsheetApp.openById(SS_ID);
-  const sheet = ss.getSheetByName("S5Master");
-  const data = sheet.getDataRange().getValues();
+// ==================== FETCH MSS DETAILS ====================
+function getMSSDetails(mssNo) {
+  const ss = getSpreadsheet();
+  const sheet = ss.getSheetByName("S1MSSList");
+  if (!sheet) return { success: false, message: "S1MSSList sheet not found!" };
   
+  const data = sheet.getDataRange().getValues();
   for (let i = 1; i < data.length; i++) {
-    if (data[i][0].toString() === mssNo.toString()) {
-      let row = i + 1;
-      let val = Number(value);
+    if (String(data[i][0]).trim() === String(mssNo).trim()) {
+      let rawDate = data[i][4];
+      let formattedDate = formatDateDDMMYYYY(rawDate);
+      return {
+        success: true,
+        data: {
+          mssNo: data[i][0],
+          name: data[i][1],
+          address: data[i][2],
+          mobile: data[i][3],
+          acOpenDate: formattedDate,
+          yrsMonths: data[i][5],
+          installment: data[i][6]
+        }
+      };
+    }
+  }
+  return { success: false, message: "MSS No Not Found in S1MSSList!" };
+}
 
-      if (field === 'month') {
-        let currentH = Number(data[i][7]) || 0; 
-        sheet.getRange(row, 8).setValue(currentH + val); // Column H: Month যোগ
-      } 
-      else if (field === 'refund') {
-        sheet.getRange(row, 13).setValue(val); // Column M: Refund Saving বসবে
-        let currentK = Number(data[i][10]) || 0;
-        sheet.getRange(row, 11).setValue(currentK - val); // Column K: Principal বিয়োগ
-      } 
-      else if (field === 'profit') {
-        let currentN = Number(data[i][13]) || 0;
-        sheet.getRange(row, 14).setValue(currentN + val); // Column N: Profit যোগ হবে (পুরানোটা ডিলিট হবে না)
-      }
+// Helper: Sync S1MSSList and S5Master Columns A to G
+function syncMasterAndMSSList(data) {
+  const ss = getSpreadsheet();
+  
+  // 1. Update/Add S1MSSList
+  const sheet1 = ss.getSheetByName("S1MSSList");
+  const data1 = sheet1.getDataRange().getValues();
+  let found1 = false;
+  for (let i = 1; i < data1.length; i++) {
+    if (String(data1[i][0]).trim() === String(data.mssNo).trim()) {
+      sheet1.getRange(i + 1, 1, 1, 7).setValues([[
+        data.mssNo, data.name, data.address, data.mobile, data.acOpenDate, data.yrsMonths, data.installment
+      ]]);
+      found1 = true;
       break;
     }
   }
+  if (!found1) {
+    sheet1.appendRow([data.mssNo, data.name, data.address, data.mobile, data.acOpenDate, data.yrsMonths, data.installment]);
+  }
+
+  // 2. Update/Add S5Master A-G
+  const sheet5 = ss.getSheetByName("S5Master");
+  const data5 = sheet5.getDataRange().getValues();
+  let found5 = false;
+  for (let i = 1; i < data5.length; i++) {
+    if (String(data5[i][0]).trim() === String(data.mssNo).trim()) {
+      sheet5.getRange(i + 1, 1, 1, 7).setValues([[
+        data.mssNo, data.name, data.address, data.mobile, data.acOpenDate, data.yrsMonths, data.installment
+      ]]);
+      found5 = true;
+      break;
+    }
+  }
+  if (!found5) {
+    let newRow = new Array(16).fill("");
+    newRow[0] = data.mssNo;
+    newRow[1] = data.name;
+    newRow[2] = data.address;
+    newRow[3] = data.mobile;
+    newRow[4] = data.acOpenDate;
+    newRow[5] = data.yrsMonths;
+    newRow[6] = data.installment;
+    sheet5.appendRow(newRow);
+  }
+}
+
+// Helper: Send Email Notification
+function sendEmailNotification(subject, body) {
+  try {
+    MailApp.sendEmail(NOTIFICATION_EMAIL, subject, body);
+  } catch (e) {
+    Logger.log("Email Notification Error: " + e.message);
+  }
+}
+
+// ==================== SUBMIT REC SAVING ====================
+function submitRecSaving(form, userId) {
+  const ss = getSpreadsheet();
+  const now = new Date();
+  const formattedDate = formatDateDDMMYYYY(now);
+  const formattedDateTimeStr = formatDateTime(now);
+  
+  syncMasterAndMSSList(form);
+  
+  const sheet2 = ss.getSheetByName("S2RecSaving");
+  sheet2.appendRow([
+    formattedDate, form.mssNo, form.name, form.address, form.mobile,
+    form.acOpenDate, form.yrsMonths, form.installment,
+    Number(form.installCount || 0), Number(form.amount || 0), form.remarks
+  ]);
+  
+  const sheet5 = ss.getSheetByName("S5Master");
+  const data5 = sheet5.getDataRange().getValues();
+  for (let i = 1; i < data5.length; i++) {
+    if (String(data5[i][0]).trim() === String(form.mssNo).trim()) {
+      let currentInstCount = Number(data5[i][7] || 0);
+      let newInstCount = currentInstCount + Number(form.installCount || 0);
+      sheet5.getRange(i + 1, 8).setValue(newInstCount);
+      sheet5.getRange(i + 1, 16).setValue(userId + " & " + formattedDateTimeStr);
+      break;
+    }
+  }
+
+  const emailSubject = `[ASED App] Rec Saving Entry - MSS: ${form.mssNo}`;
+  const emailBody = `New Rec Saving Entry Details:\n\nDate: ${formattedDate}\nMSS No: ${form.mssNo}\nName: ${form.name}\nInstallments Count: ${form.installCount}\nAmount: ${form.amount}\nSubmitted By User ID: ${userId}\nDate & Time: ${formattedDateTimeStr}`;
+  sendEmailNotification(emailSubject, emailBody);
+
+  return { success: true, message: "Rec Saving entry saved successfully!" };
+}
+
+// ==================== SUBMIT REFUND SAVING ====================
+function submitRfndSaving(form, userId) {
+  const ss = getSpreadsheet();
+  const now = new Date();
+  const formattedDate = formatDateDDMMYYYY(now);
+  const formattedDateTimeStr = formatDateTime(now);
+  
+  const sheet3 = ss.getSheetByName("S3RfndSaving");
+  sheet3.appendRow([formattedDate, form.mssNo, form.name, Number(form.principal || 0)]);
+  
+  const sheet5 = ss.getSheetByName("S5Master");
+  const data5 = sheet5.getDataRange().getValues();
+  for (let i = 1; i < data5.length; i++) {
+    if (String(data5[i][0]).trim() === String(form.mssNo).trim()) {
+      let currentRefund = Number(data5[i][12] || 0);
+      let currentPrincipal = Number(data5[i][10] || 0);
+      let refundAmount = Number(form.principal || 0);
+      
+      let newRefund = currentRefund + refundAmount;
+      let newPrincipal = currentPrincipal - refundAmount;
+      
+      sheet5.getRange(i + 1, 13).setValue(newRefund);
+      sheet5.getRange(i + 1, 11).setValue(newPrincipal);
+      sheet5.getRange(i + 1, 16).setValue(userId + " & " + formattedDateTimeStr);
+      break;
+    }
+  }
+
+  const emailSubject = `[ASED App] Refund Saving Entry - MSS: ${form.mssNo}`;
+  const emailBody = `New Refund Saving Entry Details:\n\nDate: ${formattedDate}\nMSS No: ${form.mssNo}\nName: ${form.name}\nTaka (Principal Refunded): ${form.principal}\nSubmitted By User ID: ${userId}\nDate & Time: ${formattedDateTimeStr}`;
+  sendEmailNotification(emailSubject, emailBody);
+
+  return { success: true, message: "Refund Saving entry saved successfully!" };
+}
+
+// ==================== SUBMIT PROFIT ====================
+function submitProfit(form, userId) {
+  const ss = getSpreadsheet();
+  const now = new Date();
+  const formattedDate = formatDateDDMMYYYY(now);
+  const formattedDateTimeStr = formatDateTime(now);
+  
+  const sheet4 = ss.getSheetByName("S4Profit");
+  sheet4.appendRow([formattedDate, form.mssNo, form.name, Number(form.profit || 0)]);
+  
+  const sheet5 = ss.getSheetByName("S5Master");
+  const data5 = sheet5.getDataRange().getValues();
+  for (let i = 1; i < data5.length; i++) {
+    if (String(data5[i][0]).trim() === String(form.mssNo).trim()) {
+      let currentProfit = Number(data5[i][13] || 0);
+      let newProfit = currentProfit + Number(form.profit || 0);
+      
+      sheet5.getRange(i + 1, 14).setValue(newProfit);
+      sheet5.getRange(i + 1, 16).setValue(userId + " & " + formattedDateTimeStr);
+      break;
+    }
+  }
+
+  const emailSubject = `[ASED App] Profit Paid Entry - MSS: ${form.mssNo}`;
+  const emailBody = `New Profit Paid Entry Details:\n\nDate: ${formattedDate}\nMSS No: ${form.mssNo}\nName: ${form.name}\nProfit Amount: ${form.profit}\nSubmitted By User ID: ${userId}\nDate & Time: ${formattedDateTimeStr}`;
+  sendEmailNotification(emailSubject, emailBody);
+
+  return { success: true, message: "Profit entry saved successfully!" };
+}
+
+// ==================== GET ALL S5MASTER DATA ====================
+function getAllS5MasterData() {
+  const ss = getSpreadsheet();
+  const sheet = ss.getSheetByName("S5Master");
+  if (!sheet) return [];
+  
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+
+  const rows = data.slice(1);
+  return rows.map(function(row) {
+    return {
+      mssNo: String(row[0] || ""),
+      name: String(row[1] || ""),
+      acOpenDt: formatDateDDMMYYYY(row[4]),
+      yrs: String(row[5] || ""),
+      installment: row[6] !== "" ? Number(row[6]) : "",
+      monthKisti: row[7] !== "" ? Number(row[7]) : 0,
+      principal: row[10] !== "" ? Number(row[10]) : 0,
+      remarks: String(row[14] || "")
+    };
+  });
+}
+
+// Helper: Robust Date Parser for Search Filter
+function parseToDate(val) {
+  if (!val) return null;
+  if (val instanceof Date) {
+    val.setHours(0,0,0,0);
+    return val;
+  }
+  
+  const str = String(val).trim();
+  
+  // Pattern 1: YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    const p = str.split('-');
+    return new Date(parseInt(p[0]), parseInt(p[1]) - 1, parseInt(p[2]));
+  }
+  
+  // Pattern 2: DD-MM-YYYY or DD/MM/YYYY
+  const p = str.split(/[-/]/);
+  if (p.length === 3) {
+    if (p[0].length === 2 && p[2].length === 4) {
+      return new Date(parseInt(p[2]), parseInt(p[1]) - 1, parseInt(p[0]));
+    }
+    if (p[0].length === 4) {
+      return new Date(parseInt(p[0]), parseInt(p[1]) - 1, parseInt(p[2]));
+    }
+  }
+  
+  const d = new Date(val);
+  if (!isNaN(d.getTime())) {
+    d.setHours(0,0,0,0);
+    return d;
+  }
+  return null;
+}
+
+// ==================== DATE RANGE REPORT SEARCH ====================
+function getDateRangeReport(sheetName, fromDateStr, toDateStr) {
+  const ss = getSpreadsheet();
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return { headers: [], rows: [] };
+  
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return { headers: [], rows: [] };
+  
+  const start = parseToDate(fromDateStr);
+  const end = parseToDate(toDateStr);
+  if (end) end.setHours(23, 59, 59, 999);
+  
+  let results = [];
+  const headers = data[0].map(h => String(h));
+  
+  for (let i = 1; i < data.length; i++) {
+    const row = data[i];
+    if (!row[0]) continue;
+    
+    const rowDate = parseToDate(row[0]);
+    
+    if (rowDate && start && end && rowDate >= start && rowDate <= end) {
+      let rowObj = {};
+      headers.forEach((h, idx) => {
+        let val = row[idx];
+        if (idx === 0) {
+          val = formatDateDDMMYYYY(val);
+        } else if (val instanceof Date) {
+          val = formatDateDDMMYYYY(val);
+        } else {
+          val = (val !== null && val !== undefined) ? String(val) : "";
+        }
+        rowObj[h] = val;
+      });
+      results.push(rowObj);
+    }
+  }
+  return { headers: headers, rows: results };
 }
